@@ -2,14 +2,14 @@
 name: a-stock-data
 description: A股全栈数据工具包 — 覆盖行情(mootdx+腾讯+百度K线)、研报(东财+同花顺+iwencai)、信号(同花顺热点+北向+龙虎榜+解禁+行业)、资金面(融资融券+大宗交易+股东户数+分红+资金流分钟级+资金流120日)、新闻(东财个股+全球资讯)、基础数据(mootdx财务/F10+东财+新浪三表)、公告(巨潮)七层数据源，内嵌全部调用代码，自包含零依赖外部文件。优先用通达信(mootdx)/腾讯(不封IP)，东财接口已内置限流防封。适用于个股估值、研报检索、题材归因、龙虎榜跟踪、解禁预警、行业轮动、融资融券跟踪、筹码分析、产业链调研、批量筛选等场景。
 origin: custom
-version: 3.2.3
+version: 3.2.5
 ---
 
 > 📦 项目主页：https://github.com/simonlin1212/a-stock-data — 更新、反馈、支持作者
 > 
 > 作者：Simon 林 · 抖音「Simon林」· 公众号「硅基世纪」
 
-# A股全栈数据工具包 V3.2.3
+# A股全栈数据工具包 V3.2.5
 
 七层数据架构，28 个端点实测可用（2026-06 验证；财联社快讯已下线，详见 §5.2），覆盖主板/中小板/科创板/ST。
 
@@ -284,6 +284,18 @@ DATACENTER_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 # Keep-Alive 会话，批量调用时自动降速，避免被封。详见「数据源优先级 & 东财防封」章节。
 EM_SESSION = requests.Session()
 EM_SESSION.headers.update({"User-Agent": UA})
+# 连接级自动重试：瞬态连接错误 / 429 / 5xx 指数退避重试（住宅IP偶发风控更稳）。
+# 注意：403 不重试（东财风控信号，重试无益反而加重；按下方 EM_MIN_INTERVAL 降频应对）。
+try:
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    _em_adapter = HTTPAdapter(max_retries=Retry(
+        total=3, connect=3, backoff_factor=0.6,
+        status_forcelist=[429, 500, 502, 503, 504], allowed_methods=["GET"]))
+    EM_SESSION.mount("https://", _em_adapter)
+    EM_SESSION.mount("http://", _em_adapter)
+except Exception:
+    pass  # 老版本 urllib3 缺 allowed_methods 等参数时降级为无重试，不影响主流程
 EM_MIN_INTERVAL = 1.0          # 两次东财请求最小间隔(秒)；批量筛选建议调大到 1.5~2
 _em_last_call = [0.0]          # 模块级上次请求时间戳
 
@@ -330,10 +342,17 @@ from mootdx.quotes import Quotes
 client = tdx_client()  # 见 Prerequisites 的 tdx_client() helper（规避 0.11.x BESTIP bug；等价 Quotes.factory(market='std')）
 
 # === K线数据 ===
-# market: 0=深圳, 1=上海
-# category: 4=日线, 5=周线, 6=月线, 7=1分钟, 8=5分钟, 9=15分钟, 10=30分钟, 11=60分钟
-klines = client.bars(symbol='688017', category=4, offset=10)
+# ⚠️ 参数名是 frequency（不是 category！传 category 会被 **kwargs 静默吞掉，
+#    永远退化成默认 frequency=9 日线，拿不到分钟数据）。
+# mootdx 0.11.7 实测频率值表：
+#   0=5分钟  1=15分钟  2=30分钟  3=60分钟(1小时)  4=日线  5=周线  6=月线
+#   8=1分钟  9=日线(默认)  10=季线  11=年线        （7=1分钟除权口径,少用）
+klines = client.bars(symbol='688017', frequency=9, offset=10)    # 日线
+min1   = client.bars(symbol='688017', frequency=8, offset=240)   # 1分钟（一个交易日≈240根）
+min5   = client.bars(symbol='688017', frequency=0, offset=48)    # 5分钟
 # 返回: open, close, high, low, vol, amount, datetime
+# ⚠️ 复权：bars 返回【不复权】原始价（通达信原始数据，无 adjust 参数）。
+#    跨除权除息日做估值/回测前需自行复权，或改用带前复权的日K数据源（腾讯财经）。
 
 # === 实时报价 ===
 quotes = client.quotes(symbol=['688017', '300476'])
@@ -535,7 +554,7 @@ def download_pdf(record: dict, target_dir: str = "./reports") -> str | None:
     if not info_code:
         return None
     date = (record.get("publishDate") or "")[:10]
-    org = record.get("orgSName") or "未知"
+    org = re.sub(r'[\\/:*?"<>|]', "_", record.get("orgSName") or "未知")[:40]
     title = re.sub(r'[\\/:*?"<>|]', "_", record.get("title", ""))[:80]
     fname = f"{date}_{org}_{title}.pdf"
     target = Path(target_dir) / fname
@@ -2004,16 +2023,22 @@ def full_valuation(code: str) -> dict:
     eps_cur = eps_next = None
     analyst_count = 0
     if not df.empty and len(df.columns) >= 3:
-        # 解析表格（列结构因页面可能变化，取前两行数据行）
+        # 按列名取「均值」=机构一致预期EPS（见 ths_eps_forecast 文档）。
+        # 不按 iloc 位置取——同花顺表格列序会变；且旧版误用 iloc[2]＝「最小值」
+        # 当成一致预期，导致 pe_forward/PEG 系统性偏差，此处一并修正。
+        def _pick(row, name):
+            for c in df.columns:
+                if name in str(c):
+                    return row.get(c)
+            return None
         try:
-            for i, row in df.iterrows():
-                if i == 0:
-                    eps_cur = float(row.iloc[2]) if pd.notna(row.iloc[2]) else None
-                    analyst_count = int(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
-                elif i == 1:
-                    eps_next = float(row.iloc[2]) if pd.notna(row.iloc[2]) else None
-        except (ValueError, IndexError):
-            pass
+            r0 = df.iloc[0]
+            v = _pick(r0, "均值");          eps_cur = float(v) if pd.notna(v) else None
+            cnt = _pick(r0, "预测机构数");  analyst_count = int(cnt) if pd.notna(cnt) else 0
+            if len(df) >= 2:
+                vn = _pick(df.iloc[1], "均值"); eps_next = float(vn) if pd.notna(vn) else None
+        except (ValueError, TypeError) as e:
+            print(f"[WARN] full_valuation EPS 解析失败({e})，估值可能不完整")
 
     # 3. 估值指标
     pe_fwd = price / eps_cur if eps_cur else float("inf")

@@ -4,6 +4,8 @@ A 股全栈数据工具包 — 7 层架构 · 28 个端点 · 13 个数据源 ·
 
 一个自包含的 Skill 文件，把分散在 13 个数据源里的 A 股原始数据整合成 AI 编程助手直接能用的工具集。你不用再背 mootdx 的 K 线参数、东财的 PDF Referer 头、iwencai 的 X-Claw 鉴权——全部封装好了。
 
+> **V3.2.5 修复（2026-06-28 · #31 / #28）：** ① **分钟 K 线参数 Bug（CRITICAL）**——`bars()` 参数名误写 `category`（实为 `frequency`），被 `**kwargs` 静默吞掉、永远退化成日线，分钟/周/月线全取不到 → 改正参数名 + 按源码重写频率值表 + 补 1分钟/5分钟示例；② **复权口径**——mootdx `bars` 返回**不复权**原始价，补跨除权日须自行复权的警示；③ **`full_valuation` EPS 取错列**——旧 `iloc[2]` 取的是同花顺「最小值」而非「均值＝机构一致预期EPS」，致 PE_fwd/PEG 系统性偏差 → 改按列名取；④ `em_get()` 加连接级自动重试。
+>
 > **V3.2.4 修复（2026-06-20 · #26）：** **mootdx 0.11.x 全新安装 BESTIP 空串崩溃**——干净环境裸调 `Quotes.factory()` 抛 `ValueError: not enough values to unpack`（老用户 config 已填 IP 不触发，故易漏测）。新增 `tdx_client()` helper（TCP 探测可用服务器 + 三级 fallback）统一替换 4 处 mootdx 调用，对 0.10/0.11 通用、不锁版本（锁 0.10.12 反而在部分 Python 下 import 崩）。
 >
 > **V3.2.3 新增（2026-06-20）：** **行业研报**——研报层补上东财行业研报端点 `eastmoney_industry_reports()`，与个股研报同端点（仅 `qType=1`），支持全行业拉取或按东财行业码精确过滤，PDF 复用现有 `download_pdf()`。端点数 27 → 28。
@@ -25,7 +27,7 @@ A 股全栈数据工具包 — 7 层架构 · 28 个端点 · 13 个数据源 ·
 ## 架构
 
 ```
-A 股全栈数据 · 七层架构 · V3.2.4
+A 股全栈数据 · 七层架构 · V3.2.5
 │  （优先级：mootdx/腾讯 不封IP 优先用；东财仅用于独有数据，已内置限流防封）
 ├── 行情层    mootdx + 腾讯财经 + 百度K线   K线(带MA5/10/20) + 五档盘口 + PE/PB/市值 + 指数/ETF
 ├── 研报层    东财 reportapi + 同花顺 + iwencai  个股研报 / 行业研报 / PDF下载 / 一致预期 / NL搜索
@@ -163,6 +165,16 @@ pip install mootdx requests pandas stockstats
 
 ---
 
+## V3.2.5 亮点
+
+| 变化 | 说明 |
+|------|------|
+| **分钟 K 线参数 Bug（#31，CRITICAL）** | `client.bars()` 旧代码用了不存在的参数名 `category=`，被 mootdx `**kwargs` 静默吞掉 → `frequency` 永远默认 9（日线），任何分钟/周/月线请求都静默退化成日线还不报错。改正为 `frequency=`，按 mootdx 0.11.7 源码重写频率值表（旧表 7-11 整段错），补 1分钟（`8`）/ 5分钟（`0`）示例 |
+| **复权口径说明（#28）** | mootdx `bars` 返回**不复权**原始价（签名无 `adjust` 参数）→ 补警示：跨除权除息日做估值/回测须自行复权，或改用带前复权的腾讯日 K |
+| **`full_valuation` EPS 取错列修复** | 旧代码 `row.iloc[2]` 取的是同花顺表「最小值」列，而非文档声明的「均值＝机构一致预期EPS」（列序 年度/预测机构数/最小值/均值/最大值）→ 致 PE_forward/PEG 系统性偏低。改按列名 `均值`/`预测机构数` 取，抗列序漂移；解析失败由静默 `except: pass` 改 `[WARN]` |
+| **`em_get()` 连接级重试** | 挂载 `HTTPAdapter + urllib3.Retry`（total=3 指数退避，429/5xx 重试，403 不重试、靠降频应对），住宅 IP 偶发瞬态错误更稳 |
+| **download_pdf 文件名加固** | `org` 机构简称与 `title` 一致做路径字符清洗 + 截断，防机构名含 `/` 拼坏保存路径 |
+
 ## V3.2.4 亮点
 
 | 变化 | 说明 |
@@ -288,6 +300,8 @@ Full-stack data toolkit for China A-Share market — 7-layer architecture · 28 
 
 A self-contained Skill file that consolidates raw A-share data from 13 sources into a ready-to-use toolkit for AI coding assistants. No need to memorize mootdx candlestick parameters, Eastmoney PDF Referer headers, or iwencai X-Claw authentication — it's all handled.
 
+> **V3.2.5 Fix (2026-06-28 · #31 / #28):** ① **Minute K-line parameter bug (CRITICAL)** — `bars()` used a non-existent param name `category` (the real one is `frequency`); it got silently swallowed by `**kwargs`, so `frequency` always defaulted to 9 (daily) and minute/weekly/monthly requests silently degraded to daily with no error. Fixed the param name, rewrote the frequency table from mootdx source, added 1-min/5-min examples. ② **Adjustment** — mootdx `bars` returns **unadjusted** raw prices; added a warning to adjust manually across ex-dividend dates. ③ **`full_valuation` read the wrong EPS column** — old `iloc[2]` picked the THS "min" column instead of "mean = consensus EPS", biasing PE_fwd/PEG → now picks by column name. ④ `em_get()` now has connection-level retry.
+>
 > **V3.2.4 Fix (2026-06-20 · #26):** **mootdx 0.11.x fresh-install BESTIP crash** — on a clean machine a bare `Quotes.factory()` throws `ValueError: not enough values to unpack` (existing users whose config already holds IPs never hit it, so it was easy to miss). Added a `tdx_client()` helper (TCP-probes a built-in server list + 3-level fallback) and routed all 4 mootdx calls through it; works on 0.10/0.11 with no version pin (pinning 0.10.12 actually crashes on import under some Pythons).
 >
 > **V3.2.3 New (2026-06-20):** **Industry reports** — added the Eastmoney industry-report endpoint `eastmoney_industry_reports()` to the research layer. Same endpoint as single-stock reports (only `qType=1`); pull all industries or filter by an Eastmoney industry code, PDF download reuses the existing `download_pdf()`. Endpoints 27 → 28.
@@ -309,7 +323,7 @@ A self-contained Skill file that consolidates raw A-share data from 13 sources i
 ## Architecture
 
 ```
-China A-Share Full-Stack Data · 7-Layer Architecture · V3.2.4
+China A-Share Full-Stack Data · 7-Layer Architecture · V3.2.5
 │  (Priority: prefer mootdx/Tencent — never IP-banned; Eastmoney only for exclusive data, with built-in throttling)
 ├── Market Data    mootdx + Tencent + Baidu K-line   Candlesticks (w/ MA5/10/20) + Order Book + PE/PB + Index/ETF
 ├── Research       Eastmoney + THS + iwencai          Stock reports / Industry reports / PDF / Consensus EPS / NL search
@@ -446,6 +460,16 @@ Just tell your AI assistant:
 | New Target Research | Coverage → Valuation → Concepts → Fund flow → Dragon tiger → Lockup → Margin | 1 min |
 
 ---
+
+## V3.2.5 Highlights
+
+| Change | Description |
+|--------|-------------|
+| **Minute K-line parameter bug (#31, CRITICAL)** | `client.bars()` used a non-existent param `category=`, silently swallowed by mootdx `**kwargs` → `frequency` always defaulted to 9 (daily), so every minute/weekly/monthly request silently degraded to daily with no error. Fixed to `frequency=`, rewrote the frequency table from mootdx 0.11.7 source (old `7-11` rows were all wrong), added 1-min (`8`) / 5-min (`0`) examples |
+| **Adjustment note (#28)** | mootdx `bars` returns **unadjusted** raw prices (no `adjust` param) → added warning: adjust manually across ex-dividend dates or use Tencent forward-adjusted daily K |
+| **`full_valuation` wrong EPS column fix** | Old `row.iloc[2]` read the THS "min" column instead of the documented "mean = consensus EPS" (column order: year/analyst count/min/mean/max), biasing PE_forward/PEG low. Now picks by column name, resilient to column reordering; silent `except: pass` → `[WARN]` |
+| **`em_get()` connection-level retry** | Mounts `HTTPAdapter + urllib3.Retry` (total=3 exponential backoff, retry on 429/5xx, no retry on 403 — handled by throttling), steadier against transient errors on residential IPs |
+| **download_pdf filename hardening** | `org` (institution short name) now sanitized + truncated like `title`, preventing `/` in names from breaking the save path |
 
 ## V3.2.4 Highlights
 

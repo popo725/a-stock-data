@@ -1,5 +1,24 @@
 # Changelog
 
+## v3.2.5 — 2026-06-28
+
+### 修复（实测坐实的真 Bug · #31 / #28）
+- **§1.1 mootdx K线参数名写错，分钟数据恒退化为日线（#31，CRITICAL）**：旧代码 `client.bars(symbol=..., category=4, ...)` 用了不存在的参数名 `category`。mootdx `bars()` 真实签名是 `bars(symbol, frequency=9, start=0, offset=800, **kwargs)`——`category` 被 `**kwargs` **静默吞掉**，`frequency` 永远取默认值 **9（日线）**。后果：任何 agent 想取分钟/周/月 K 线全部静默退化成日线、且不报错（用户只能自行 fallback 到新浪 API）。**修复**：参数名改 `frequency`，并按 mootdx 0.11.7 源码重写频率值表（旧表 `7=1分钟…11=60分钟` 整段错误）。补 1 分钟（`frequency=8`）/ 5 分钟（`frequency=0`）示例。
+- **§1.1 复权口径未说明（#28）**：mootdx `bars` 返回**不复权**原始价（通达信原始数据，签名无 `adjust` 参数），跨除权除息日做估值/回测会失真。文档此前零说明 → 补明确警示：跨除权日需自行复权或改用带前复权的日 K 数据源（腾讯财经）。
+- **§full_valuation 机构一致预期 EPS 取错列（HIGH）**：旧代码 `row.iloc[2]` 按位置取，而同花顺 `ths_eps_forecast` 表列序为 `年度/预测机构数/最小值/均值/最大值`——`iloc[2]` 实为「**最小值**」，并非文档声明的「均值＝机构一致预期EPS」。导致 `pe_forward`/`PEG`/估值摘要**系统性偏差**（取值偏低）。**修复**：改按列名 `均值` / `预测机构数` 取，抗列序漂移；解析失败由静默 `except: pass` 改为打印 `[WARN]`。
+
+### 优化
+- **§东财 `em_get()` 增加连接级自动重试**（glm review P1.3）：挂载 `HTTPAdapter + urllib3.Retry`（`total=3`、指数退避、`status_forcelist=[429,500,502,503,504]`、仅 GET）。403 不重试（东财风控信号，靠 `EM_MIN_INTERVAL` 降频应对）。老版本 urllib3 缺参数时降级为无重试，不影响主流程。
+- **§download_pdf 文件名加固**：`org`（机构简称）与 `title` 一致做 `re.sub` 路径字符清洗 + 截断，避免机构名含 `/` 等字符拼坏保存路径。
+
+### 测试
+- 本机实跑 mootdx 0.11.7 坐实 #31：`bars(category=8)` 索引全为 `15:00`（日线，复现退化）；`bars(frequency=8)` 索引 `14:59/15:00`（真 1 分钟）、`frequency=0` 为 5 分钟间隔；`bars` 签名确认无 `category`/`adjust`。
+- 实跑同花顺 `worth.html`（600519）坐实 EPS 取列错误：`iloc[2]=最小值=66.27` vs `均值=68.82`；修复后按列名取到 `68.82`。
+- `em_get` Retry 挂载 smoke test 通过（`HTTPAdapter` 正常 mount）。
+
+### 说明
+- 端点数（28）、数据源数不变；本版为 bugfix + 文档修正。感谢 @hhsacsb（#31）、#28 提问者，及社区 glm review（@taicilang-lcy，#27）。
+
 ## v3.2.4 — 2026-06-20
 
 ### 修复（mootdx 0.11.x 兼容 · #26 / PR #7）
