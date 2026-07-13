@@ -1,0 +1,50 @@
+{
+  "generated_at": "2026-07-13",
+  "purpose": "F10 interface source backup references for personal research",
+  "sources": [
+    {
+      "name": "AKShare",
+      "repository": "akfamily/akshare",
+      "commit": "fcdbf25aa864a218c54864c3f6ab6a2ed19cce28",
+      "license_file": "LICENSE",
+      "relevant_paths": [
+        "akshare/stock/stock_info.py",
+        "akshare/stock_feature/stock_report_em.py",
+        "akshare/stock_feature/stock_gdfx_em.py",
+        "akshare/stock_feature/stock_gdhs.py",
+        "akshare/stock_feature/stock_fhps_em.py"
+      ]
+    },
+    {
+      "name": "AxData",
+      "repository": "electkismet/AxData",
+      "commit": "9ce545ad81b4408e5e10b63022c4c9e3e592cb59",
+      "license_file": "LICENSE",
+      "relevant_paths": [
+        "packages/axdata-source-tdx/src/axdata_source_tdx/f10_executor.py",
+        "packages/axdata-source-tdx/src/axdata_source_tdx/"
+      ]
+    },
+    {
+      "name": "mootdx",
+      "repository": "mootdx/mootdx",
+      "commit": "e99ae34382d970c68654c6d17c45512e728f130d",
+      "license_file": "LICENSE",
+      "relevant_paths": [
+        "mootdx/quotes.py",
+        "docs/api/quote1.md"
+      ]
+    },
+    {
+      "name": "gotdx",
+      "repository": "bensema/gotdx",
+      "commit": "25c9fae16f89a3289d916e07a4db8c5323f13b2c",
+      "license_file": "LICENSE",
+      "relevant_paths": [
+        "README.md",
+        "examples/stock_f10_block",
+        "examples/stock_company_raw"
+      ]
+    }
+  ]
+}
